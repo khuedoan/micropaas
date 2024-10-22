@@ -2,7 +2,7 @@ services:
   micropaas:
     build: .
     ports:
-      - 2222:22
+      - 2222:2222
     environment:
       SOFT_SERVE_INITIAL_ADMIN_KEYS: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN5ue4np7cF34f6dwqH1262fPjkowHQ8irfjVC156PCG'
     volumes:

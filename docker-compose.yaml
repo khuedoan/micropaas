@@ -8,7 +8,9 @@ services:
     volumes:
       - micropaas-ssh:/var/lib/micropaas/ssh
       - micropaas-web:/var/lib/micropaas/web
-      - nix:/nix
+      # Only for development
+      - ./hooks:/var/lib/micropaas/hooks
+      - ./stagit:/etc/stagit
   nginx:
     image: nginx
     ports:

@@ -5,7 +5,6 @@ set -eu
 name=$(basename "$(pwd)")
 
 reposdir="${SOFT_SERVE_DATA_PATH}/repos"
-dir="${reposdir}/${name}"
 htmldir="${SOFT_SERVE_DATA_PATH}/web"
 stagitdir="/"
 destdir="${htmldir}${stagitdir}"

@@ -6,7 +6,8 @@ RUN nix-env -iA \
     nixpkgs.docker \
     nixpkgs.git \
     nixpkgs.soft-serve \
-    nixpkgs.stagit
+    nixpkgs.stagit \
+    nixpkgs.yq-go
 
 ENV SOFT_SERVE_DATA_PATH=/var/lib/micropaas
 ENV SOFT_SERVE_HTTP_LISTEN_ADDR=:8080

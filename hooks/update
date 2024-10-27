@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 # TODO rewrite?
 
@@ -7,6 +7,7 @@ set -eu
 REF_NAME="${1}"
 OLD_OBJECT="${2}"
 NEW_OBJECT="${3}"
+DEFAULT_BRANCH="${DEFAULT_BRANCH:-master}"
 
 WORKDIR="$(mktemp -d)"
 CACHE_DIR="/var/cache/micropaas/${SOFT_SERVE_REPO_NAME}/${REF_NAME}"
@@ -24,13 +25,29 @@ fi
 if [ -f "Dockerfile" ]; then
     docker build . --tag "${SOFT_SERVE_REPO_NAME}:${NEW_OBJECT}"
 
-    if [ "${REF_NAME}" = "refs/heads/master" ]; then
+    if [ "${REF_NAME}" = "refs/heads/${DEFAULT_BRANCH}" ]; then
         REGISTRY_HOST="${REGISTRY_HOST:-docker.io}"
-        IMAGE_TAG="${REGISTRY_HOST}/${SOFT_SERVE_REPO_NAME}"
+        IMAGE_TAG="${REGISTRY_HOST}/${SOFT_SERVE_REPO_NAME}:${NEW_OBJECT}"
 
         docker tag "${SOFT_SERVE_REPO_NAME}:${NEW_OBJECT}" "${IMAGE_TAG}"
         # TODO docker login
         docker push --quiet "${IMAGE_TAG}"
+
+        pushd /var/lib/micropaas/repos/gitops.git
+        [ -d "${DEFAULT_BRANCH}" ] && git worktree remove --force "${DEFAULT_BRANCH}"
+        git worktree add --quiet "${DEFAULT_BRANCH}" "${DEFAULT_BRANCH}"
+        pushd "${DEFAULT_BRANCH}"
+        unset GIT_DIR
+        yq eval ".app-template.controllers.main.containers.main.image.tag = \"${NEW_OBJECT}\"" -i "apps/${SOFT_SERVE_REPO_NAME}/values.yaml"
+        git add .
+        git \
+            -c user.name="Khue Doan" \
+            -c user.email="mail@khuedoan.com" \
+            commit \
+            --message "chore(${SOFT_SERVE_REPO_NAME}): update image tag to ${NEW_OBJECT}"
+        popd
+        git worktree remove "${DEFAULT_BRANCH}"
+        popd
     fi
 fi
 

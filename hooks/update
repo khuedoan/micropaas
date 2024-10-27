@@ -9,7 +9,7 @@ OLD_OBJECT="${2}"
 NEW_OBJECT="${3}"
 
 WORKDIR="$(mktemp -d)"
-CACHE_DIR="/${HOME}/.cache/micropaas/${SOFT_SERVE_REPO_NAME}/${REF_NAME}"
+CACHE_DIR="/var/cache/micropaas/${SOFT_SERVE_REPO_NAME}/${REF_NAME}"
 
 git worktree add --quiet "${WORKDIR}" "${NEW_OBJECT}"
 

@@ -33,7 +33,9 @@ if [ -f "Dockerfile" ]; then
         # TODO docker login
         docker push --quiet "${IMAGE_TAG}"
 
-        pushd /var/lib/micropaas/repos/gitops.git
+        GITOPS_REPO="${GITOPS_REPO:-gitops}"
+
+        pushd "/var/lib/micropaas/repos/${GITOPS_REPO}.git"
         [ -d "${DEFAULT_BRANCH}" ] && git worktree remove --force "${DEFAULT_BRANCH}"
         git worktree add --quiet "${DEFAULT_BRANCH}" "${DEFAULT_BRANCH}"
         pushd "${DEFAULT_BRANCH}"

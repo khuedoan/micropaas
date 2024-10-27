@@ -17,12 +17,21 @@ pushd "${WORKDIR}"
 
 if [ -f flake.nix ] && [ -f Makefile ] && grep --quiet --regexp "^ci:$" Makefile; then
     mkdir -p "${CACHE_DIR}"
-    nix develop --command \
+    nix develop --quiet --command \
         make ci REF_NAME="${REF_NAME}" OLD_OBJECT="${OLD_OBJECT}" NEW_OBJECT="${NEW_OBJECT}" CACHE_DIR="${CACHE_DIR}"
 fi
 
 if [ -f "Dockerfile" ]; then
-    docker build .
+    docker build . --tag "${SOFT_SERVE_REPO_NAME}:${NEW_OBJECT}"
+
+    if [ "${REF_NAME}" = "refs/heads/master" ]; then
+        REGISTRY_HOST="${REGISTRY_HOST:-docker.io}"
+        IMAGE_TAG="${REGISTRY_HOST}/${SOFT_SERVE_REPO_NAME}"
+
+        docker tag "${SOFT_SERVE_REPO_NAME}:${NEW_OBJECT}" "${IMAGE_TAG}"
+        # TODO docker login
+        docker push --quiet "${IMAGE_TAG}"
+    fi
 fi
 
 popd

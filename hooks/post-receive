@@ -21,11 +21,3 @@ cp /etc/stagit/* .
 
 stagit-index "${reposdir}/"*/ > "${destdir}/index.html"
 cp /etc/stagit/* "${destdir}"
-
-if [ -f "Dockerfile" ]; then
-    export REGISTRY_HOST="${REGISTRY_HOST:-docker.io}"
-
-    docker build . \
-        --tag "${REGISTRY_HOST}/${SOFT_SERVE_REPO_NAME}:latest" \
-        --push
-fi

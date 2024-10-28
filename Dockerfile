@@ -1,6 +1,6 @@
 FROM nixos/nix:latest
 
-RUN echo 'experimental-features = flakes nix-command' >> /etc/nix/nix.conf
+COPY ./nix/nix.conf /etc/nix/nix.conf
 
 RUN nix-env -iA \
     nixpkgs.docker \

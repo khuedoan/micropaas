@@ -44,8 +44,8 @@ if [ -f "Dockerfile" ]; then
         yq eval ".app-template.controllers.main.containers.main.image.tag = \"${NEW_OBJECT}\"" -i "apps/${SOFT_SERVE_REPO_NAME}/values.yaml"
         git add .
         git \
-            -c user.name="Khue Doan" \
-            -c user.email="mail@khuedoan.com" \
+            -c user.name="${GIT_USER_NAME:-Bot}" \
+            -c user.email="${GIT_USER_EMAIL:-bot@example.com}" \
             commit \
             --message "chore(${SOFT_SERVE_REPO_NAME}): update image tag to ${NEW_OBJECT}"
 

@@ -38,9 +38,11 @@ ci:
 
 ## Configuration
 
-| Environment variable | Default     | Description                                        |
-| -------------------- | ----------- | -------------------------------------------------- |
-| `DEFAULT_BRANCH`     | `master`    | Default branch that triggers deployment on push    |
-| `DOCKER_HOST`        |             | Specifies the remote Docker host                   |
-| `GITOPS_REPO`        | `gitops`    | Specifies the GitOps repository used in deployment |
-| `REGISTRY_HOST`      | `docker.io` | Hostname or prefix for the container registry      |
+| Environment variable | Default           | Description                                        |
+| -------------------- | ----------------- | -------------------------------------------------- |
+| `DEFAULT_BRANCH`     | `master`          | Default branch that triggers deployment on push    |
+| `DOCKER_HOST`        |                   | Specifies the remote Docker host                   |
+| `GITOPS_REPO`        | `gitops`          | Specifies the GitOps repository used in deployment |
+| `REGISTRY_HOST`      | `docker.io`       | Hostname or prefix for the container registry      |
+| `GIT_USER_NAME`      | `Bot`             | Git committer user name for the deploy step        |
+| `GIT_USER_EMAIL`     | `bot@example.com` | Git committer user email for the deploy step       |

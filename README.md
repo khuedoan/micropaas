@@ -28,11 +28,11 @@ Example `Makefile` with a `ci` target:
 
 ```make
 ci:
-    # Create a target cache directory for Cargo build output
+	# Create a target cache directory for Cargo build output
 	mkdir -p "${CACHE_DIR}/target"
-    # Symlink the target cache directory to the build directory
+	# Symlink the target cache directory to the build directory
 	ln -s "${CACHE_DIR}/target" "target"
-    # Run tests utilizing the cached target directory
+	# Run tests utilizing the cached target directory
 	cargo test
 ```
 

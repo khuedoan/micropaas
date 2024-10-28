@@ -39,6 +39,7 @@ if [ -f "Dockerfile" ]; then
         [ -d "${DEFAULT_BRANCH}" ] && git worktree remove --force "${DEFAULT_BRANCH}"
         git worktree add --quiet "${DEFAULT_BRANCH}" "${DEFAULT_BRANCH}"
         pushd "${DEFAULT_BRANCH}"
+        # GIT_DIR is '.' by default, which will not work when cd to another repo worktree
         unset GIT_DIR
         yq eval ".app-template.controllers.main.containers.main.image.tag = \"${NEW_OBJECT}\"" -i "apps/${SOFT_SERVE_REPO_NAME}/values.yaml"
         git add .

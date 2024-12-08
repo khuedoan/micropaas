@@ -27,7 +27,9 @@ if [ -f "Dockerfile" ]; then
     docker build . --tag "${SOFT_SERVE_REPO_NAME}:${NEW_OBJECT}"
     IMAGE_TAG="${REGISTRY_HOST}/${SOFT_SERVE_REPO_NAME}:${NEW_OBJECT}"
 elif (nixpacks detect . | grep -cve '^\s*$'); then
-    nixpacks build . --tag "${SOFT_SERVE_REPO_NAME}:${NEW_OBJECT}"
+    nixpacks build . \
+        --cache-key "${SOFT_SERVE_REPO_NAME}" \
+        --tag "${SOFT_SERVE_REPO_NAME}:${NEW_OBJECT}"
     IMAGE_TAG="${REGISTRY_HOST}/${SOFT_SERVE_REPO_NAME}:${NEW_OBJECT}"
 fi
 

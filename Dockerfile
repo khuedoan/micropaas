@@ -5,6 +5,7 @@ COPY ./nix/nix.conf /etc/nix/nix.conf
 RUN nix-env -iA \
     nixpkgs.docker \
     nixpkgs.git \
+    nixpkgs.nixpacks \
     nixpkgs.soft-serve \
     nixpkgs.stagit \
     nixpkgs.yq-go

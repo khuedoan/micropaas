@@ -1,12 +1,10 @@
+use anyhow::Result;
 use clap::Parser;
 use std::{
-    env,
-    fs,
-    path::Path,
-    process::Command,
+    env, fs,
+    process::{Command, Stdio},
 };
 use tracing::info;
-use anyhow::Result;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -23,31 +21,21 @@ struct Image {
 }
 
 fn setup_workspace(new_object: &String) -> Result<()> {
-    let mktemp = Command::new("mktemp")
-        .args(&["-d"])
-        .output()?;
-
-    let workspace_dir = std::str::from_utf8(&mktemp.stdout)?
-        .trim()
-        .to_string();
+    let workspace_dir =
+        std::str::from_utf8(&Command::new("mktemp").args(&["-d"]).output()?.stdout)?
+            .trim()
+            .to_string();
 
     Command::new("git")
-        .args(&[
-            "worktree",
-            "add",
-            "--quiet",
-            &workspace_dir,
-            new_object,
-        ])
+        .args(&["worktree", "add", "--quiet", &workspace_dir, new_object])
         .output()?;
-    
+
     env::set_current_dir(&workspace_dir)?;
 
     Ok(())
 }
 
 fn ci(ref_name: &String, old_object: &String, new_object: &String) -> Result<()> {
-    info!("Workspace directory: {:?}", env::current_dir().unwrap());
     if fs::metadata("flake.nix").is_ok()
         && fs::metadata("flake.lock").is_ok()
         && fs::metadata("Makefile").is_ok()
@@ -55,9 +43,26 @@ fn ci(ref_name: &String, old_object: &String, new_object: &String) -> Result<()>
             .map(|contents| contents.lines().any(|line| line == "ci:"))
             .unwrap_or(false)
     {
-        info!("running CI {ref_name} {old_object} {new_object}");
+        info!("Running CI (this may take a while to donwload dependencies)");
+
+        Command::new("nix")
+            .args(&[
+                "develop",
+                "--quiet",
+                "--command",
+                "make",
+                "ci",
+                &format!("REF_NAME={ref_name}"),
+                &format!("OLD_OBJECT={old_object}"),
+                &format!("NEW_OBJECT={new_object}"),
+                &format!("CACHE_DIR=/tmp"),
+            ])
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .output()?;
     }
-    Err(anyhow::anyhow!("not implemented"))
+
+    Ok(())
 }
 
 fn build() -> Result<Image> {

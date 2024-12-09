@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::Parser;
 use serde::Serialize;
 use std::{
@@ -168,22 +168,27 @@ fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> 
     info!("Deploying {image:?}");
     let default_branch = env::var("DEFAULT_BRANCH").unwrap_or("master".to_string());
     let gitops_bare_dir = format!("/var/lib/micropaas/repos/{gitops_repo}.git");
+    env::set_current_dir(&gitops_bare_dir)?;
+
     info!("Setting up worktree for {default_branch} from {gitops_bare_dir}");
+    let worktree_dir = format!("{}/{}", gitops_bare_dir, default_branch);
     Command::new("git")
         .args(&[
             "worktree",
             "add",
             "--quiet",
-            &default_branch,
+            &worktree_dir,
             &default_branch,
         ])
-        .current_dir(&gitops_bare_dir)
-        .output()?
-        .stdout;
+        .status()?
+        .success()
+        .then_some(())
+        .ok_or_else(|| anyhow!("failed to create new worktree"))?;
 
-    let worktree_dir = format!("{}/{}", gitops_bare_dir, default_branch);
 
-    let app_values_file = format!("{}/apps/{}/values.yaml", worktree_dir, repository);
+    env::set_current_dir(&worktree_dir)?;
+
+    let app_values_file = format!("apps/{repository}/values.yaml");
 
     info!("Updating image tag in {app_values_file}");
     let content = std::fs::read_to_string(&app_values_file)?;
@@ -204,18 +209,29 @@ fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> 
     let new_yaml = serde_yaml::to_string(&yaml)?;
 
     Command::new("git")
-        .args(&["diff"])
-        .current_dir(&worktree_dir)
+        .args(&[
+            "diff"
+        ])
+        .env_remove("GIT_DIR")
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .output()?;
+        .status()?
+        .success()
+        .then_some(())
+        .ok_or_else(|| anyhow!("failed to run diff"))?;
 
     info!("Committing changes");
     std::fs::write(app_values_file, new_yaml)?;
     Command::new("git")
-        .args(&["add", "."])
-        .current_dir(&gitops_bare_dir)
-        .output()?;
+        .args(&[
+            "add",
+            "."
+        ])
+        .env_remove("GIT_DIR")
+        .status()?
+        .success()
+        .then_some(())
+        .ok_or_else(|| anyhow!("failed to stage change"))?;
 
     Command::new("git")
         .args(&[
@@ -229,13 +245,19 @@ fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> 
                 "user.email={}",
                 env::var("GIT_USER_EMAIL").unwrap_or("bot@example.com".to_string())
             ),
+            "commit",
+            "--message",
+            &format!("chore({}): update image tag to {}", repository, image.tag),
         ])
-        .current_dir(worktree_dir)
-        .output()?;
+        .env_remove("GIT_DIR")
+        .status()?
+        .success()
+        .then_some(())
+        .ok_or_else(|| anyhow!("failed to commit change"))?;
 
+    env::set_current_dir(&gitops_bare_dir)?;
     Command::new("git")
         .args(&["worktree", "remove", "--force", &default_branch])
-        .current_dir(gitops_bare_dir)
         .output()?;
 
     Ok(repository.to_string())

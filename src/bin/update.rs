@@ -1,6 +1,12 @@
 use clap::Parser;
-use std::fs;
+use std::{
+    env,
+    fs,
+    path::Path,
+    process::Command,
+};
 use tracing::info;
+use anyhow::Result;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -16,40 +22,32 @@ struct Image {
     tag: String,
 }
 
-fn ci() -> Result<(), String> {
-    info!("running CI");
+fn setup_workspace(new_object: &String) -> Result<()> {
+    let mktemp = Command::new("mktemp")
+        .args(&["-d"])
+        .output()?;
+
+    let workspace_dir = std::str::from_utf8(&mktemp.stdout)?
+        .trim()
+        .to_string();
+
+    Command::new("git")
+        .args(&[
+            "worktree",
+            "add",
+            "--quiet",
+            &workspace_dir,
+            new_object,
+        ])
+        .output()?;
+    
+    env::set_current_dir(&workspace_dir)?;
+
     Ok(())
 }
 
-fn build() -> Result<Image, String> {
-    info!("build");
-    Ok(Image {
-        registry: "docker.io".to_string(),
-        repository: "khuedoan/blog".to_string(),
-        tag: "latest".to_string(),
-    })
-}
-
-fn push(image: &Image) -> Result<(), String> {
-    info!("pushing {image:?}");
-    Ok(())
-}
-
-fn deploy(image: &Image) -> Result<(), String> {
-    info!("deploying {image:?}");
-    Ok(())
-}
-
-fn main() {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .without_time()
-        .init();
-
-    let args = Args::parse();
-
-    info!("{:?}", args);
-
+fn ci(ref_name: &String, old_object: &String, new_object: &String) -> Result<()> {
+    info!("Workspace directory: {:?}", env::current_dir().unwrap());
     if fs::metadata("flake.nix").is_ok()
         && fs::metadata("flake.lock").is_ok()
         && fs::metadata("Makefile").is_ok()
@@ -57,11 +55,41 @@ fn main() {
             .map(|contents| contents.lines().any(|line| line == "ci:"))
             .unwrap_or(false)
     {
-        ci().unwrap();
+        info!("running CI {ref_name} {old_object} {new_object}");
     }
+    Err(anyhow::anyhow!("not implemented"))
+}
+
+fn build() -> Result<Image> {
+    info!("building");
+    Err(anyhow::anyhow!("not implemented"))
+}
+
+fn push(image: &Image) -> Result<()> {
+    info!("pushing {image:?}");
+    Err(anyhow::anyhow!("not implemented"))
+}
+
+fn deploy(image: &Image) -> Result<()> {
+    info!("deploying {image:?}");
+    Err(anyhow::anyhow!("not implemented"))
+}
+
+fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .without_time()
+        .init();
+
+    let args = Args::parse();
+
+    setup_workspace(&args.new_object)?;
+    ci(&args.ref_name, &args.old_object, &args.new_object)?;
 
     if let Ok(image) = build() {
-        push(&image).unwrap();
-        deploy(&image).unwrap();
+        push(&image)?;
+        deploy(&image)?;
     }
+
+    Ok(())
 }

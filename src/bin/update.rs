@@ -20,7 +20,7 @@ struct Image {
     tag: String,
 }
 
-fn setup_workspace(new_object: &String) -> Result<()> {
+fn setup_workspace(new_object: &str) -> Result<()> {
     let workspace_dir =
         std::str::from_utf8(&Command::new("mktemp").args(&["-d"]).output()?.stdout)?
             .trim()
@@ -35,7 +35,7 @@ fn setup_workspace(new_object: &String) -> Result<()> {
     Ok(())
 }
 
-fn ci(ref_name: &String, old_object: &String, new_object: &String) -> Result<()> {
+fn ci(repository: &str, ref_name: &str, old_object: &str, new_object: &str) -> Result<()> {
     if fs::metadata("flake.nix").is_ok()
         && fs::metadata("flake.lock").is_ok()
         && fs::metadata("Makefile").is_ok()
@@ -43,7 +43,7 @@ fn ci(ref_name: &String, old_object: &String, new_object: &String) -> Result<()>
             .map(|contents| contents.lines().any(|line| line == "ci:"))
             .unwrap_or(false)
     {
-        info!("Running CI (this may take a while to donwload dependencies)");
+        info!("Running CI (this may take a while to download dependencies)");
 
         Command::new("nix")
             .args(&[
@@ -55,7 +55,7 @@ fn ci(ref_name: &String, old_object: &String, new_object: &String) -> Result<()>
                 &format!("REF_NAME={ref_name}"),
                 &format!("OLD_OBJECT={old_object}"),
                 &format!("NEW_OBJECT={new_object}"),
-                &format!("CACHE_DIR=/tmp"),
+                &format!("CACHE_DIR=/var/cache/micropaas/{repository}/{ref_name}"),
             ])
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -86,20 +86,22 @@ fn build_type() -> Result<Option<BuildType>> {
     }
 }
 
-fn build(new_object: &String) -> Result<Option<Image>> {
-    let repository = env::var("SOFT_SERVE_REPO_NAME")?;
+fn build(repository: &str, new_object: &str) -> Result<Option<Image>> {
     let tag = new_object;
     match build_type()? {
         Some(BuildType::Dockerfile) => {
             info!("Building Dockerfile");
             Command::new("docker")
-                .args(&["build", ".", "--tag", &format!("{repository}:{tag}")])
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
+                .args(&[
+                    "build",
+                    ".",
+                    "--tag",
+                    &format!("localhost/{repository}:{tag}"),
+                ])
                 .output()?;
             Ok(Some(Image {
                 registry: "localhost".to_string(),
-                repository,
+                repository: repository.to_string(),
                 tag: tag.to_string(),
             }))
         }
@@ -112,14 +114,12 @@ fn build(new_object: &String) -> Result<Option<Image>> {
                     "--cache-key",
                     &repository,
                     "--tag",
-                    &format!("{repository}:{tag}"),
+                    &format!("localhost/{repository}:{tag}"),
                 ])
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
                 .output()?;
             Ok(Some(Image {
                 registry: "localhost".to_string(),
-                repository,
+                repository: repository.to_string(),
                 tag: tag.to_string(),
             }))
         }
@@ -127,13 +127,48 @@ fn build(new_object: &String) -> Result<Option<Image>> {
     }
 }
 
-fn push(image: &Image) -> Result<()> {
-    info!("pushing {image:?}");
+fn push(registry: &str, image: &Image) -> Result<Image> {
+    let remote_image = Image {
+        registry: registry.to_string(),
+        repository: image.repository.clone(),
+        tag: image.tag.clone(),
+    };
+
+    Command::new("docker")
+        .args(&[
+            "tag",
+            &format!("{}/{}:{}", image.registry, image.repository, image.tag),
+            &format!(
+                "{}/{}:{}",
+                remote_image.registry, remote_image.repository, remote_image.tag
+            ),
+        ])
+        .output()?;
+
+    info!("Pushing {remote_image:?}");
+    Command::new("docker")
+        .args(&[
+            "push",
+            "--quiet",
+            &format!(
+                "{}/{}:{}",
+                remote_image.registry, remote_image.repository, remote_image.tag
+            ),
+        ])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .output()?;
+
+    Ok(remote_image)
+}
+
+fn deploy(image: &Image) -> Result<String> {
+    info!("deploying {image:?}");
     Err(anyhow::anyhow!("not implemented"))
 }
 
-fn deploy(image: &Image) -> Result<()> {
-    info!("deploying {image:?}");
+fn trigger_sync(_app: &str) -> Result<()> {
+    info!("triggering sync");
     Err(anyhow::anyhow!("not implemented"))
 }
 
@@ -144,13 +179,25 @@ fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
+    let repository = env::var("SOFT_SERVE_REPO_NAME")?;
 
     setup_workspace(&args.new_object)?;
-    ci(&args.ref_name, &args.old_object, &args.new_object)?;
 
-    if let Ok(Some(image)) = build(&args.new_object) {
-        push(&image)?;
-        deploy(&image)?;
+    ci(
+        &repository,
+        &args.ref_name,
+        &args.old_object,
+        &args.new_object,
+    )?;
+
+    if let Ok(Some(image)) = build(&repository, &args.new_object) {
+        if let Ok(registry) = env::var("REGISTRY_HOST") {
+            push(&registry, &image)
+                .and_then(|remote_image| deploy(&remote_image))
+                .and_then(|app| trigger_sync(app.as_ref()))?;
+        } else {
+            info!("No REGISTRY_HOST set, skipping push and deploy");
+        }
     }
 
     Ok(())

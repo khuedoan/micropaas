@@ -1,10 +1,11 @@
 use anyhow::Result;
 use clap::Parser;
+use serde::Serialize;
 use std::{
     env, fs,
     process::{Command, Stdio},
 };
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -78,7 +79,8 @@ fn build_type() -> Result<Option<BuildType>> {
         .output()?
         .stdout
         .len()
-        > 0
+        > 1
+    // TODO ??
     {
         Ok(Some(BuildType::Nixpacks))
     } else {
@@ -162,14 +164,121 @@ fn push(registry: &str, image: &Image) -> Result<Image> {
     Ok(remote_image)
 }
 
-fn deploy(image: &Image) -> Result<String> {
-    info!("deploying {image:?}");
-    Err(anyhow::anyhow!("not implemented"))
+fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> {
+    info!("Deploying {image:?}");
+    let default_branch = env::var("DEFAULT_BRANCH").unwrap_or("master".to_string());
+    let gitops_bare_dir = format!("/var/lib/micropaas/repos/{gitops_repo}.git");
+    info!("Setting up worktree for {default_branch} from {gitops_bare_dir}");
+    Command::new("git")
+        .args(&[
+            "worktree",
+            "add",
+            "--quiet",
+            &default_branch,
+            &default_branch,
+        ])
+        .current_dir(&gitops_bare_dir)
+        .output()?
+        .stdout;
+
+    let worktree_dir = format!("{}/{}", gitops_bare_dir, default_branch);
+
+    let app_values_file = format!("{}/apps/{}/values.yaml", worktree_dir, repository);
+
+    info!("Updating image tag in {app_values_file}");
+    let content = std::fs::read_to_string(&app_values_file)?;
+    let mut yaml: serde_yaml::Value = serde_yaml::from_str(&content)?;
+
+    if let Some(tag) = yaml
+        .get_mut("app-template")
+        .and_then(|v| v.get_mut("controllers"))
+        .and_then(|v| v.get_mut("main"))
+        .and_then(|v| v.get_mut("containers"))
+        .and_then(|v| v.get_mut("main"))
+        .and_then(|v| v.get_mut("image"))
+        .and_then(|v| v.get_mut("tag"))
+    {
+        *tag = serde_yaml::Value::String(image.tag.clone());
+    }
+
+    let new_yaml = serde_yaml::to_string(&yaml)?;
+
+    Command::new("git")
+        .args(&["diff"])
+        .current_dir(&worktree_dir)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .output()?;
+
+    info!("Committing changes");
+    std::fs::write(app_values_file, new_yaml)?;
+    Command::new("git")
+        .args(&["add", "."])
+        .current_dir(&gitops_bare_dir)
+        .output()?;
+
+    Command::new("git")
+        .args(&["-c", "user.name=Bot", "-c", "user.email", "bot@example.com"])
+        .current_dir(worktree_dir)
+        .output()?;
+
+    Command::new("git")
+        .args(&["worktree", "remove", "--force", &default_branch])
+        .current_dir(gitops_bare_dir)
+        .output()?;
+
+    Ok(repository.to_string())
 }
 
-fn trigger_sync(_app: &str) -> Result<()> {
-    info!("triggering sync");
-    Err(anyhow::anyhow!("not implemented"))
+fn trigger_sync(repository: &str) -> Result<()> {
+    #[derive(Debug, Serialize)]
+    struct Commit {
+        added: Vec<String>,
+        modified: Vec<String>,
+        removed: Vec<String>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct Repository {
+        html_url: String,
+        default_branch: String,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct WebhookPayload {
+        r#ref: String,
+        before: String,
+        after: String,
+        commits: Vec<Commit>,
+        repository: Repository,
+    }
+
+    let argocd_webhook_endpoint = env::var("ARGOCD_WEBHOOK_ENDPOINT")
+        .unwrap_or("http://argocd-server.argocd.svc.cluster.local/api/webhook".to_string());
+    // TODO https://github.com/argoproj/argo-cd/issues/12268
+    // Pretending to be GitHub for now, read this code to understand the required payload
+    // https://github.com/argoproj/argo-cd/blob/master/util/webhook/webhook.go
+    reqwest::blocking::Client::new()
+        .post(&argocd_webhook_endpoint)
+        .header("Content-Type", "application/json")
+        .header("X-GitHub-Event", "push")
+        .json(&WebhookPayload {
+            r#ref: "refs/heads/master".to_string(),
+            before: "0000000000000000000000000000000000000000".to_string(),
+            after: "0000000000000000000000000000000000000000".to_string(),
+            commits: vec![Commit {
+                added: vec![],
+                modified: vec![],
+                removed: vec![],
+            }],
+            repository: Repository {
+                html_url: format!("http://micropaas.micropaas.svc.cluster.local:8080/{repository}"),
+                default_branch: "master".to_string(),
+            },
+        })
+        .send()?;
+
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -193,10 +302,13 @@ fn main() -> Result<()> {
     if let Ok(Some(image)) = build(&repository, &args.new_object) {
         if let Ok(registry) = env::var("REGISTRY_HOST") {
             push(&registry, &image)
-                .and_then(|remote_image| deploy(&remote_image))
+                .and_then(|remote_image| {
+                    let gitops_repo = env::var("GITOPS_REPO").unwrap_or("gitops".to_string());
+                    deploy(&remote_image, &gitops_repo, &repository)
+                })
                 .and_then(|app| trigger_sync(app.as_ref()))?;
         } else {
-            info!("No REGISTRY_HOST set, skipping push and deploy");
+            warn!("No REGISTRY_HOST set, skipping push and deploy");
         }
     }
 

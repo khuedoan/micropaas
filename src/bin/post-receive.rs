@@ -1,3 +1,10 @@
+use tracing::info;
+
 fn main() {
-    println!("post-receive hook");
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .without_time()
+        .init();
+
+    info!("updating frontend");
 }

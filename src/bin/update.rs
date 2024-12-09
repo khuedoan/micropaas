@@ -218,7 +218,18 @@ fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> 
         .output()?;
 
     Command::new("git")
-        .args(&["-c", "user.name=Bot", "-c", "user.email", "bot@example.com"])
+        .args(&[
+            "-c",
+            &format!(
+                "user.name={}",
+                env::var("GIT_USER_NAME").unwrap_or("Bot".to_string())
+            ),
+            "-c",
+            &format!(
+                "user.email={}",
+                env::var("GIT_USER_EMAIL").unwrap_or("bot@example.com".to_string())
+            ),
+        ])
         .current_dir(worktree_dir)
         .output()?;
 

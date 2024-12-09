@@ -8,11 +8,14 @@ services:
     volumes:
       - micropaas-ssh:/var/lib/micropaas/ssh
       - micropaas-web:/var/lib/micropaas/web
-      # Only for development
-      - ./hooks:/var/lib/micropaas/hooks
-      - ./stagit:/etc/stagit
-      - /var/run/docker.sock:/var/run/docker.sock
       - cache:/var/cache
+      - /var/run/docker.sock:/var/run/docker.sock
+    develop:
+      watch:
+        - action: rebuild
+          path: Cargo.toml
+        - action: rebuild
+          path: src
   nginx:
     image: nginx
     ports:

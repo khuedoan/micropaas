@@ -5,7 +5,8 @@ use std::{
     env, fmt, fs,
     process::{Command, Stdio},
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -27,11 +28,13 @@ impl fmt::Display for Image {
     }
 }
 
+#[tracing::instrument(level = "debug")]
 fn setup_workspace(new_object: &str) -> Result<()> {
     let workspace_dir =
         std::str::from_utf8(&Command::new("mktemp").args(&["-d"]).output()?.stdout)?
             .trim()
             .to_string();
+    debug!("workspace dir: {}", workspace_dir);
 
     Command::new("git")
         .args(&["worktree", "add", "--quiet", &workspace_dir, new_object])
@@ -42,6 +45,7 @@ fn setup_workspace(new_object: &str) -> Result<()> {
     Ok(())
 }
 
+#[tracing::instrument(level = "debug")]
 fn ci(repository: &str, ref_name: &str, old_object: &str, new_object: &str) -> Result<()> {
     if fs::metadata("flake.nix").is_ok()
         && fs::metadata("flake.lock").is_ok()
@@ -79,6 +83,7 @@ enum Builder {
 }
 
 impl Builder {
+    #[tracing::instrument(level = "debug")]
     fn detect() -> Result<Self> {
         if fs::metadata("Dockerfile").is_ok() {
             Ok(Builder::Dockerfile)
@@ -96,6 +101,7 @@ impl Builder {
         }
     }
 
+    #[tracing::instrument(level = "debug")]
     fn build(&self, repository: &str, new_object: &str) -> Result<Image> {
         match self {
             Builder::Dockerfile => {
@@ -125,6 +131,7 @@ impl Builder {
                         "--tag",
                         &format!("localhost/{repository}:{new_object}"),
                     ])
+                    .env("CLICOLOR_FORCE", "true")
                     .stdout(Stdio::inherit())
                     .output()?;
                 Ok(Image {
@@ -137,6 +144,7 @@ impl Builder {
     }
 }
 
+#[tracing::instrument(level = "debug")]
 fn push(registry: &str, image: &Image) -> Result<Image> {
     let remote_image = Image {
         registry: registry.to_string(),
@@ -144,6 +152,7 @@ fn push(registry: &str, image: &Image) -> Result<Image> {
         tag: image.tag.clone(),
     };
 
+    debug!("tagging {image} as {remote_image}");
     Command::new("docker")
         .args(&[
             "tag",
@@ -168,8 +177,6 @@ fn push(registry: &str, image: &Image) -> Result<Image> {
                 remote_image.registry, remote_image.repository, remote_image.tag
             ),
         ])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
         .status()?
         .success()
         .then_some(())
@@ -178,12 +185,14 @@ fn push(registry: &str, image: &Image) -> Result<Image> {
     Ok(remote_image)
 }
 
+#[tracing::instrument(level = "debug")]
 fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> {
+    info!("deploying {image} to via {gitops_repo}");
     let default_branch = env::var("DEFAULT_BRANCH").unwrap_or("master".to_string());
     let gitops_bare_dir = format!("/var/lib/micropaas/repos/{gitops_repo}.git");
     env::set_current_dir(&gitops_bare_dir)?;
 
-    info!("setting up worktree for {default_branch} from {gitops_bare_dir}");
+    debug!("setting up worktree for {default_branch} from {gitops_bare_dir}");
     let worktree_dir = format!("{}/{}", gitops_bare_dir, default_branch);
     Command::new("git")
         .args(&["worktree", "add", "--quiet", &worktree_dir, &default_branch])
@@ -192,12 +201,13 @@ fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> 
         .then_some(())
         .ok_or_else(|| anyhow!("failed to create new worktree"))?;
 
+    debug!("worktree dir: {worktree_dir}");
     env::set_current_dir(&worktree_dir)?;
 
     let app_values_file = format!("apps/{repository}/values.yaml");
-
-    info!("updating image tag in {app_values_file}");
+    debug!("updating image tag in {app_values_file}");
     let content = std::fs::read_to_string(&app_values_file)?;
+    debug!("app values file content: {content}");
     let mut yaml: serde_yaml::Value = serde_yaml::from_str(&content)?;
 
     if let Some(tag) = yaml
@@ -213,6 +223,7 @@ fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> 
     }
 
     let new_yaml = serde_yaml::to_string(&yaml)?;
+    debug!("new app values file content: {new_yaml}");
 
     std::fs::write(app_values_file, new_yaml)?;
 
@@ -226,7 +237,7 @@ fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> 
     {
         warn!("no changes to commit");
     } else {
-        info!("committing changes");
+        debug!("committing changes");
         Command::new("git")
             .args(&["add", "."])
             .env_remove("GIT_DIR")
@@ -266,12 +277,13 @@ fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> 
     Ok(repository.to_string())
 }
 
+#[tracing::instrument(level = "debug")]
 fn trigger_sync(webhook_endpoint: &str, repository: &str) -> Result<()> {
-    info!("triggering sync for {repository}");
+    debug!("triggering sync for {repository}");
     // TODO https://github.com/argoproj/argo-cd/issues/12268
     // Pretending to be GitHub for now, read this code to understand the required payload
     // https://github.com/argoproj/argo-cd/blob/master/util/webhook/webhook.go
-    reqwest::blocking::Client::new()
+    let response = reqwest::blocking::Client::new()
         .post(webhook_endpoint)
         .header("Content-Type", "application/json")
         .header("X-GitHub-Event", "push")
@@ -292,13 +304,16 @@ fn trigger_sync(webhook_endpoint: &str, repository: &str) -> Result<()> {
         }
     }))
         .send()?;
+    debug!("webhook response: {:?}", response);
 
     Ok(())
 }
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_env_filter(
+            EnvFilter::try_from_env("LOG_LEVEL").unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .without_time()
         .init();
 

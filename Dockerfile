@@ -27,6 +27,7 @@ RUN nix-env -iA \
     nixpkgs.yq-go
 
 ENV SOFT_SERVE_DATA_PATH=/var/lib/micropaas
+ENV SOFT_SERVE_DB_DATA_SOURCE="db/soft-serve.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
 ENV SOFT_SERVE_HTTP_LISTEN_ADDR=:8080
 ENV SOFT_SERVE_SSH_LISTEN_ADDR=:2222
 

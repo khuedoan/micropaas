@@ -9,6 +9,7 @@ services:
       GITOPS_REPO: 'gitops'
       LOG_LEVEL: 'debug'
     volumes:
+      - micropaas-db:/var/lib/micropaas/db
       - micropaas-ssh:/var/lib/micropaas/ssh
       - micropaas-web:/var/lib/micropaas/web
       - cache:/var/cache
@@ -35,5 +36,6 @@ services:
 volumes:
   cache: {}
   nix: {}
+  micropaas-db: {}
   micropaas-ssh: {}
   micropaas-web: {}

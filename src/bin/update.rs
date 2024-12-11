@@ -66,7 +66,7 @@ fn ci(repository: &str, ref_name: &str, old_object: &str, new_object: &str) -> R
                 &format!("REF_NAME={ref_name}"),
                 &format!("OLD_OBJECT={old_object}"),
                 &format!("NEW_OBJECT={new_object}"),
-                &format!("CACHE_DIR=/var/cache/micropaas/{repository}/{ref_name}"),
+                &format!("CACHE_DIR=/var/cache/micropaas/{repository}"),
             ])
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -357,7 +357,7 @@ fn main() -> Result<()> {
             }
         }
         Err(e) => {
-            warn!("{:?}", e);
+            debug!("{:?}", e);
         }
     }
 

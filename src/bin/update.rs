@@ -186,7 +186,7 @@ fn push(registry: &str, image: &Image) -> Result<Image> {
 }
 
 #[tracing::instrument(level = "debug")]
-fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> {
+fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<()> {
     info!("deploying {image} to via {gitops_repo}");
     let default_branch = env::var("DEFAULT_BRANCH").unwrap_or("master".to_string());
     let gitops_bare_dir = format!("/var/lib/micropaas/repos/{gitops_repo}.git");
@@ -274,7 +274,7 @@ fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> 
         .args(&["worktree", "remove", "--force", &default_branch])
         .output()?;
 
-    Ok(repository.to_string())
+    Ok(())
 }
 
 #[tracing::instrument(level = "debug")]
@@ -283,11 +283,7 @@ fn trigger_sync(webhook_endpoint: &str, repository: &str) -> Result<()> {
     // TODO https://github.com/argoproj/argo-cd/issues/12268
     // Pretending to be GitHub for now, read this code to understand the required payload
     // https://github.com/argoproj/argo-cd/blob/master/util/webhook/webhook.go
-    let response = reqwest::blocking::Client::new()
-        .post(webhook_endpoint)
-        .header("Content-Type", "application/json")
-        .header("X-GitHub-Event", "push")
-        .json(&json!({
+    let payload = json!({
         "ref": "refs/heads/master",
         "before": "0000000000000000000000000000000000000000",
         "after": "0000000000000000000000000000000000000000",
@@ -302,7 +298,14 @@ fn trigger_sync(webhook_endpoint: &str, repository: &str) -> Result<()> {
             "html_url": format!("http://micropaas.micropaas.svc.cluster.local:8080/{repository}"),
             "default_branch": "master"
         }
-    }))
+    });
+    debug!("webhook payload: {:?}", payload);
+
+    let response = reqwest::blocking::Client::new()
+        .post(webhook_endpoint)
+        .header("Content-Type", "application/json")
+        .header("X-GitHub-Event", "push")
+        .json(&payload)
         .send()?;
     debug!("webhook response: {:?}", response);
 
@@ -338,9 +341,9 @@ fn main() -> Result<()> {
                     let remote_image = push(&registry, &image)?;
                     match env::var("GITOPS_REPO") {
                         Ok(gitops_repo) => {
-                            let sync_repo = deploy(&remote_image, &gitops_repo, &repository)?;
+                            deploy(&remote_image, &gitops_repo, &repository)?;
                             if let Ok(webhook_endpoint) = env::var("ARGOCD_WEBHOOK_ENDPOINT") {
-                                trigger_sync(&webhook_endpoint, &sync_repo)?;
+                                trigger_sync(&webhook_endpoint, &gitops_repo)?;
                             }
                         }
                         Err(_) => {

@@ -5,6 +5,8 @@ services:
       - 2222:2222
     environment:
       SOFT_SERVE_INITIAL_ADMIN_KEYS: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN5ue4np7cF34f6dwqH1262fPjkowHQ8irfjVC156PCG'
+      REGISTRY_HOST: 'localhost:5000'
+      GITOPS_REPO: 'gitops'
     volumes:
       - micropaas-ssh:/var/lib/micropaas/ssh
       - micropaas-web:/var/lib/micropaas/web
@@ -22,6 +24,12 @@ services:
       - 8080:80
     volumes:
       - micropaas-web:/usr/share/nginx/html
+  registry:
+    image: registry
+    ports:
+      - 5000:5000
+    environment:
+      REGISTRY_LOG_LEVEL: error
 
 volumes:
   cache: {}

@@ -1,8 +1,8 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use clap::Parser;
-use serde::Serialize;
+use serde_json::json;
 use std::{
-    env, fs,
+    env, fmt, fs,
     process::{Command, Stdio},
 };
 use tracing::{info, warn};
@@ -19,6 +19,12 @@ struct Image {
     registry: String,
     repository: String,
     tag: String,
+}
+
+impl fmt::Display for Image {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}/{}:{}", self.registry, self.repository, self.tag)
+    }
 }
 
 fn setup_workspace(new_object: &str) -> Result<()> {
@@ -44,7 +50,7 @@ fn ci(repository: &str, ref_name: &str, old_object: &str, new_object: &str) -> R
             .map(|contents| contents.lines().any(|line| line == "ci:"))
             .unwrap_or(false)
     {
-        info!("Running CI (this may take a while to download dependencies)");
+        info!("running CI (this may take a while to download dependencies)");
 
         Command::new("nix")
             .args(&[
@@ -66,66 +72,68 @@ fn ci(repository: &str, ref_name: &str, old_object: &str, new_object: &str) -> R
     Ok(())
 }
 
-enum BuildType {
+#[derive(Debug)]
+enum Builder {
     Dockerfile,
     Nixpacks,
 }
 
-fn build_type() -> Result<Option<BuildType>> {
-    if fs::metadata("Dockerfile").is_ok() {
-        Ok(Some(BuildType::Dockerfile))
-    } else if Command::new("nixpacks")
-        .args(&["detect", "."])
-        .output()?
-        .stdout
-        .len()
-        > 1
-    // TODO ??
-    {
-        Ok(Some(BuildType::Nixpacks))
-    } else {
-        Ok(None)
+impl Builder {
+    fn detect() -> Result<Self> {
+        if fs::metadata("Dockerfile").is_ok() {
+            Ok(Builder::Dockerfile)
+        } else if Command::new("nixpacks")
+            .args(&["detect", "."])
+            .output()?
+            .stdout
+            .len()
+            > 1
+        // TODO ??
+        {
+            Ok(Builder::Nixpacks)
+        } else {
+            Err(anyhow!("no buildable code detected"))
+        }
     }
-}
 
-fn build(repository: &str, new_object: &str) -> Result<Option<Image>> {
-    let tag = new_object;
-    match build_type()? {
-        Some(BuildType::Dockerfile) => {
-            info!("Building Dockerfile");
-            Command::new("docker")
-                .args(&[
-                    "build",
-                    ".",
-                    "--tag",
-                    &format!("localhost/{repository}:{tag}"),
-                ])
-                .output()?;
-            Ok(Some(Image {
-                registry: "localhost".to_string(),
-                repository: repository.to_string(),
-                tag: tag.to_string(),
-            }))
+    fn build(&self, repository: &str, new_object: &str) -> Result<Image> {
+        match self {
+            Builder::Dockerfile => {
+                info!("building container image with Dockerfile");
+                Command::new("docker")
+                    .args(&[
+                        "build",
+                        ".",
+                        "--tag",
+                        &format!("localhost/{repository}:{new_object}"),
+                    ])
+                    .output()?;
+                Ok(Image {
+                    registry: "localhost".to_string(),
+                    repository: repository.to_string(),
+                    tag: new_object.to_string(),
+                })
+            }
+            Builder::Nixpacks => {
+                info!("building container image with Nixpacks");
+                Command::new("nixpacks")
+                    .args(&[
+                        "build",
+                        ".",
+                        "--cache-key",
+                        &repository,
+                        "--tag",
+                        &format!("localhost/{repository}:{new_object}"),
+                    ])
+                    .stdout(Stdio::inherit())
+                    .output()?;
+                Ok(Image {
+                    registry: "localhost".to_string(),
+                    repository: repository.to_string(),
+                    tag: new_object.to_string(),
+                })
+            }
         }
-        Some(BuildType::Nixpacks) => {
-            info!("Building with Nixpacks");
-            Command::new("nixpacks")
-                .args(&[
-                    "build",
-                    ".",
-                    "--cache-key",
-                    &repository,
-                    "--tag",
-                    &format!("localhost/{repository}:{tag}"),
-                ])
-                .output()?;
-            Ok(Some(Image {
-                registry: "localhost".to_string(),
-                repository: repository.to_string(),
-                tag: tag.to_string(),
-            }))
-        }
-        None => Ok(None),
     }
 }
 
@@ -145,9 +153,12 @@ fn push(registry: &str, image: &Image) -> Result<Image> {
                 remote_image.registry, remote_image.repository, remote_image.tag
             ),
         ])
-        .output()?;
+        .status()?
+        .success()
+        .then_some(())
+        .ok_or_else(|| anyhow!("failed to tag image {remote_image}"))?;
 
-    info!("Pushing {remote_image:?}");
+    info!("pushing {remote_image}");
     Command::new("docker")
         .args(&[
             "push",
@@ -159,38 +170,33 @@ fn push(registry: &str, image: &Image) -> Result<Image> {
         ])
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .output()?;
+        .status()?
+        .success()
+        .then_some(())
+        .ok_or_else(|| anyhow!("failed to push image {remote_image}"))?;
 
     Ok(remote_image)
 }
 
 fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> {
-    info!("Deploying {image:?}");
     let default_branch = env::var("DEFAULT_BRANCH").unwrap_or("master".to_string());
     let gitops_bare_dir = format!("/var/lib/micropaas/repos/{gitops_repo}.git");
     env::set_current_dir(&gitops_bare_dir)?;
 
-    info!("Setting up worktree for {default_branch} from {gitops_bare_dir}");
+    info!("setting up worktree for {default_branch} from {gitops_bare_dir}");
     let worktree_dir = format!("{}/{}", gitops_bare_dir, default_branch);
     Command::new("git")
-        .args(&[
-            "worktree",
-            "add",
-            "--quiet",
-            &worktree_dir,
-            &default_branch,
-        ])
+        .args(&["worktree", "add", "--quiet", &worktree_dir, &default_branch])
         .status()?
         .success()
         .then_some(())
         .ok_or_else(|| anyhow!("failed to create new worktree"))?;
 
-
     env::set_current_dir(&worktree_dir)?;
 
     let app_values_file = format!("apps/{repository}/values.yaml");
 
-    info!("Updating image tag in {app_values_file}");
+    info!("updating image tag in {app_values_file}");
     let content = std::fs::read_to_string(&app_values_file)?;
     let mut yaml: serde_yaml::Value = serde_yaml::from_str(&content)?;
 
@@ -208,52 +214,49 @@ fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> 
 
     let new_yaml = serde_yaml::to_string(&yaml)?;
 
-    Command::new("git")
-        .args(&[
-            "diff"
-        ])
+    std::fs::write(app_values_file, new_yaml)?;
+
+    if Command::new("git")
+        .args(&["diff", "--color=always", "--unified=0", "--exit-code"])
         .env_remove("GIT_DIR")
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()?
         .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("failed to run diff"))?;
+    {
+        warn!("no changes to commit");
+    } else {
+        info!("committing changes");
+        Command::new("git")
+            .args(&["add", "."])
+            .env_remove("GIT_DIR")
+            .status()?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("failed to stage change"))?;
 
-    info!("Committing changes");
-    std::fs::write(app_values_file, new_yaml)?;
-    Command::new("git")
-        .args(&[
-            "add",
-            "."
-        ])
-        .env_remove("GIT_DIR")
-        .status()?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("failed to stage change"))?;
-
-    Command::new("git")
-        .args(&[
-            "-c",
-            &format!(
-                "user.name={}",
-                env::var("GIT_USER_NAME").unwrap_or("Bot".to_string())
-            ),
-            "-c",
-            &format!(
-                "user.email={}",
-                env::var("GIT_USER_EMAIL").unwrap_or("bot@example.com".to_string())
-            ),
-            "commit",
-            "--message",
-            &format!("chore({}): update image tag to {}", repository, image.tag),
-        ])
-        .env_remove("GIT_DIR")
-        .status()?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("failed to commit change"))?;
+        Command::new("git")
+            .args(&[
+                "-c",
+                &format!(
+                    "user.name={}",
+                    env::var("GIT_USER_NAME").unwrap_or("Bot".to_string())
+                ),
+                "-c",
+                &format!(
+                    "user.email={}",
+                    env::var("GIT_USER_EMAIL").unwrap_or("bot@example.com".to_string())
+                ),
+                "commit",
+                "--message",
+                &format!("chore({}): update image tag to {}", repository, image.tag),
+            ])
+            .env_remove("GIT_DIR")
+            .status()?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("failed to commit change"))?;
+    }
 
     env::set_current_dir(&gitops_bare_dir)?;
     Command::new("git")
@@ -263,52 +266,31 @@ fn deploy(image: &Image, gitops_repo: &str, repository: &str) -> Result<String> 
     Ok(repository.to_string())
 }
 
-fn trigger_sync(repository: &str) -> Result<()> {
-    #[derive(Debug, Serialize)]
-    struct Commit {
-        added: Vec<String>,
-        modified: Vec<String>,
-        removed: Vec<String>,
-    }
-
-    #[derive(Debug, Serialize)]
-    struct Repository {
-        html_url: String,
-        default_branch: String,
-    }
-
-    #[derive(Debug, Serialize)]
-    struct WebhookPayload {
-        r#ref: String,
-        before: String,
-        after: String,
-        commits: Vec<Commit>,
-        repository: Repository,
-    }
-
-    let argocd_webhook_endpoint = env::var("ARGOCD_WEBHOOK_ENDPOINT")
-        .unwrap_or("http://argocd-server.argocd.svc.cluster.local/api/webhook".to_string());
+fn trigger_sync(webhook_endpoint: &str, repository: &str) -> Result<()> {
+    info!("triggering sync for {repository}");
     // TODO https://github.com/argoproj/argo-cd/issues/12268
     // Pretending to be GitHub for now, read this code to understand the required payload
     // https://github.com/argoproj/argo-cd/blob/master/util/webhook/webhook.go
     reqwest::blocking::Client::new()
-        .post(&argocd_webhook_endpoint)
+        .post(webhook_endpoint)
         .header("Content-Type", "application/json")
         .header("X-GitHub-Event", "push")
-        .json(&WebhookPayload {
-            r#ref: "refs/heads/master".to_string(),
-            before: "0000000000000000000000000000000000000000".to_string(),
-            after: "0000000000000000000000000000000000000000".to_string(),
-            commits: vec![Commit {
-                added: vec![],
-                modified: vec![],
-                removed: vec![],
-            }],
-            repository: Repository {
-                html_url: format!("http://micropaas.micropaas.svc.cluster.local:8080/{repository}"),
-                default_branch: "master".to_string(),
-            },
-        })
+        .json(&json!({
+        "ref": "refs/heads/master",
+        "before": "0000000000000000000000000000000000000000",
+        "after": "0000000000000000000000000000000000000000",
+        "commits": [
+            {
+                "added": [],
+                "modified": [],
+                "removed": []
+            }
+        ],
+        "repository": {
+            "html_url": format!("http://micropaas.micropaas.svc.cluster.local:8080/{repository}"),
+            "default_branch": "master"
+        }
+    }))
         .send()?;
 
     Ok(())
@@ -332,16 +314,32 @@ fn main() -> Result<()> {
         &args.new_object,
     )?;
 
-    if let Ok(Some(image)) = build(&repository, &args.new_object) {
-        if let Ok(registry) = env::var("REGISTRY_HOST") {
-            push(&registry, &image)
-                .and_then(|remote_image| {
-                    let gitops_repo = env::var("GITOPS_REPO").unwrap_or("gitops".to_string());
-                    deploy(&remote_image, &gitops_repo, &repository)
-                })
-                .and_then(|app| trigger_sync(app.as_ref()))?;
-        } else {
-            warn!("No REGISTRY_HOST set, skipping push and deploy");
+    match Builder::detect() {
+        Ok(builder) => {
+            let image = builder.build(&repository, &args.new_object)?;
+
+            match env::var("REGISTRY_HOST") {
+                Ok(registry) => {
+                    let remote_image = push(&registry, &image)?;
+                    match env::var("GITOPS_REPO") {
+                        Ok(gitops_repo) => {
+                            let sync_repo = deploy(&remote_image, &gitops_repo, &repository)?;
+                            if let Ok(webhook_endpoint) = env::var("ARGOCD_WEBHOOK_ENDPOINT") {
+                                trigger_sync(&webhook_endpoint, &sync_repo)?;
+                            }
+                        }
+                        Err(_) => {
+                            warn!("no GITOPS_REPO set, skipping deploy");
+                        }
+                    }
+                }
+                Err(_) => {
+                    warn!("no REGISTRY_HOST set, skipping push and deploy");
+                }
+            }
+        }
+        Err(e) => {
+            warn!("{:?}", e);
         }
     }
 

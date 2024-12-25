@@ -7,6 +7,7 @@ services:
       SOFT_SERVE_INITIAL_ADMIN_KEYS: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN5ue4np7cF34f6dwqH1262fPjkowHQ8irfjVC156PCG'
       REGISTRY_HOST: 'localhost:5000'
       GITOPS_REPO: 'gitops'
+      ARGOCD_WEBHOOK_ENDPOINT: 'http://fake-argo:9898/echo'
       LOG_LEVEL: 'debug'
     volumes:
       - micropaas-db:/var/lib/micropaas/db
@@ -21,7 +22,7 @@ services:
         - action: rebuild
           path: src
   nginx:
-    image: nginx
+    image: docker.io/library/nginx
     ports:
       - 8080:80
     volumes:
@@ -32,6 +33,10 @@ services:
       - 5000:5000
     environment:
       REGISTRY_LOG_LEVEL: error
+  fake-argo:
+    image: docker.io/stefanprodan/podinfo
+    ports:
+      - 9898:9898
 
 volumes:
   cache: {}

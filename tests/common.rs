@@ -4,6 +4,7 @@ pub fn setup() {
     Command::new("docker")
         .arg("compose")
         .arg("up")
+        .arg("--build")
         .arg("--detach")
         .status()
         .unwrap()
@@ -33,7 +34,6 @@ pub fn setup() {
         .success()
         .then_some(())
         .unwrap();
-
 
     Command::new("ssh-keygen")
         .arg("-R")

@@ -1,7 +1,10 @@
 .POSIX:
 .PHONY: dev fmt test
 
-dev:
+.radicle:
+	RAD_HOME=$(shell pwd)/.radicle rad auth
+
+dev: .radicle
 	docker compose up --build --watch
 
 fmt:

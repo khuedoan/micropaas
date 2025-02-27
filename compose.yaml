@@ -1,32 +1,30 @@
 services:
-  micropaas:
-    build: .
-    ports:
-      - 2222:2222
+  radicle-node:
+    image: docker.io/khuedoan/radicle-server
+    command: "radicle-node"
+    user: "1000:100"
+    userns_mode: keep-id
     environment:
-      SOFT_SERVE_INITIAL_ADMIN_KEYS: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN5ue4np7cF34f6dwqH1262fPjkowHQ8irfjVC156PCG'
-      REGISTRY_HOST: 'localhost:5000'
-      GITOPS_REPO: 'gitops'
-      ARGOCD_WEBHOOK_ENDPOINT: 'http://fake-argo:9898/echo'
-      LOG_LEVEL: 'debug'
-    volumes:
-      - micropaas-db:/var/lib/micropaas/db
-      - micropaas-ssh:/var/lib/micropaas/ssh
-      - micropaas-web:/var/lib/micropaas/web
-      - cache:/var/cache
-      - /var/run/docker.sock:/var/run/docker.sock
-    develop:
-      watch:
-        - action: rebuild
-          path: Cargo.toml
-        - action: rebuild
-          path: src
-  nginx:
-    image: docker.io/library/nginx
+      - RAD_HOME=/radicle
     ports:
-      - 8080:80
+      - 8776:8776
     volumes:
-      - micropaas-web:/usr/share/nginx/html
+      - .radicle:/radicle
+  radicle-httpd:
+    image: docker.io/khuedoan/radicle-server
+    command: "radicle-httpd"
+    user: "1000:100"
+    userns_mode: keep-id
+    environment:
+      - RAD_HOME=/radicle
+    ports:
+      - 8080:8080
+    volumes:
+      - .radicle:/radicle
+  radicle-explorer:
+    image: khuedoan/radicle-explorer
+    ports:
+      - 3000:80
   registry:
     image: registry
     ports:

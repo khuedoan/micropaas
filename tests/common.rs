@@ -34,7 +34,6 @@ pub fn setup() {
         .then_some(())
         .unwrap();
 
-
     Command::new("ssh-keygen")
         .arg("-R")
         .arg("[localhost]:2222")

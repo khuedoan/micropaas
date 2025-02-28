@@ -16,6 +16,7 @@
         packages = [
           cargo
           clippy
+          protobuf
           rustc
           rustfmt
         ];
